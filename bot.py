@@ -1,11 +1,11 @@
 import sqlite3
 import datetime
 import asyncio
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import Command, CommandObject
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
+import telebot
+import os
+
+bot = telebot.TeleBot(os.getenv("BOT_TOKEN")) # или ваш токен
+
 
 # --- НАСТРОЙКИ ПРОЕКТА ---
 TOKEN = "8938982971:AAFw3Srlc0MYChPY1h4JdMvqXQ7V9c3lZTs"
