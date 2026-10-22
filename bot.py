@@ -3,6 +3,8 @@ import datetime
 import asyncio
 import telebot
 import os
+from telebot.handler_backends import State, StatesGroup
+
 
 bot = telebot.TeleBot(os.getenv("BOT_TOKEN")) # или ваш токен
 
