@@ -509,8 +509,28 @@ def process_withdraw(message: telebot.types.Message):
     except Exception: pass
     
     bot.send_message(message.chat.id, "✅ Заявка отправлена администратору! Ожидайте зачисления.")
-    bot.delete_state(user_id, message.chat.id)
+    bot.delete_state(user_id, message.chat.id)import threading
+from flask import Flask
+
+# Создаем простенький Flask-сервер для удержания бота активным на Render
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run_flask():
+    # Render передает порт через переменные окружения, по умолчанию 10000
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
+    print("Запуск Flask-сервера в фоновом режиме...")
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    print("Бот Pocket Cash TM успешно запущен!")
+    bot.infinity_polling(skip_pending=True)
     print("Бот Pocket Cash TM успешно запущен на telebot!")
     bot.infinity_polling(skip_pending=True)
