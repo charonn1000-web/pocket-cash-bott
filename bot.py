@@ -1,20 +1,22 @@
 import sqlite3
 import datetime
-import asyncio
 import telebot
 import os
 from telebot.handler_backends import State, StatesGroup
+from telebot import custom_filters
 
+# Инициализация бота по токену из переменных окружения Render
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    # Запасной вариант на случай локального запуска (вставьте свой токен сюда при тестах на ПК, если нужно)
+    BOT_TOKEN = "8938982971:AAfw3Sr1c0MYChPY1h4JdMvqQ7V9c3lZTs"
 
-bot = telebot.TeleBot(os.getenv("BOT_TOKEN")) # или ваш токен
-
+bot = telebot.TeleBot(BOT_TOKEN)
 
 # --- НАСТРОЙКИ ПРОЕКТА ---
-
 ADMIN_ID = 7015819580  # Ваш Telegram ID
 ADMIN_USERNAME = "@charon238"  # Ваш юзернейм в Telegram
 PAYMENTS_CHANNEL = "@pocket_cash_channel"  # Канал с выплатами
-
 
 
 # --- БАЗА ДАННЫХ ---
@@ -66,38 +68,44 @@ class PromoState(StatesGroup):
 class BroadcastState(StatesGroup):
     waiting_for_message = State()
 
+# Регистрируем состояние для telebot
+bot.add_custom_filter(custom_filters.StateFilter(bot))
+
 # --- ГЛАВНОЕ МЕНЮ ---
 def get_main_menu(is_active: bool, game_level: int = 1):
-    keyboard = []
+    keyboard = telebot.types.InlineKeyboardMarkup()
     
     # Кнопка игры всегда видна
-    keyboard.append([types.InlineKeyboardButton(text="📦 Открыть сундуки (3 попытки)", callback_data="claim_bonus")])
+    keyboard.add(telebot.types.InlineKeyboardButton(text="📦 Открыть сундуки (3 попытки)", callback_data="claim_bonus"))
     
-    # Если аккаунт не активен, показываем кнопку активации/покупки раунда
+    # Если аккаунт не активен, показываем кнопку активации
     if not is_active:
         cost = 50 if game_level == 1 else 30
-        keyboard.append([types.InlineKeyboardButton(text=f"💎 Активировать доступ ({cost} TMT)", callback_data="buy_access")])
+        keyboard.add(telebot.types.InlineKeyboardButton(text=f"💎 Активировать доступ ({cost} TMT)", callback_data="buy_access"))
     
-    keyboard.append([
-        types.InlineKeyboardButton(text="🏆 Топ Игроков", callback_data="leaderboard"),
-        types.InlineKeyboardButton(text="🎯 Задания (+2 TMT)", callback_data="quests")
-    ])
-    keyboard.append([
-        types.InlineKeyboardButton(text="📖 Как работает игра?", callback_data="how_to_earn"),
-        types.InlineKeyboardButton(text="🎁 Промокод", callback_data="use_promo")
-    ])
-    keyboard.append([types.InlineKeyboardButton(text="💰 Мой баланс", callback_data="my_balance")])
-    keyboard.append([types.InlineKeyboardButton(text="👥 Рефералы (+5 TMT)", callback_data="ref_link")])
-    keyboard.append([types.InlineKeyboardButton(text="📤 Запросить вывод", callback_data="withdraw")])
+    keyboard.row(
+        telebot.types.InlineKeyboardButton(text="🏆 Топ Игроков", callback_data="leaderboard"),
+        telebot.types.InlineKeyboardButton(text="🎯 Задания (+2 TMT)", callback_data="quests")
+    )
+    keyboard.row(
+        telebot.types.InlineKeyboardButton(text="📖 Как работает игра?", callback_data="how_to_earn"),
+        telebot.types.InlineKeyboardButton(text="🎁 Промокод", callback_data="use_promo")
+    )
+    keyboard.add(telebot.types.InlineKeyboardButton(text="💰 Мой баланс", callback_data="my_balance"))
+    keyboard.add(telebot.types.InlineKeyboardButton(text="👥 Рефералы (+5 TMT)", callback_data="ref_link"))
+    keyboard.add(telebot.types.InlineKeyboardButton(text="📤 Запросить вывод", callback_data="withdraw"))
     
-    return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
+    return keyboard
 
 # --- КОМАНДА /START ---
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, command: CommandObject):
+@bot.message_handler(commands=['start'])
+def cmd_start(message: telebot.types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
-    args = command.args
+    
+    # Получаем аргументы команды /start (для рефералок)
+    args = message.text.split()
+    ref_arg = args[1] if len(args) > 1 else None
     
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
@@ -106,8 +114,8 @@ async def cmd_start(message: types.Message, command: CommandObject):
     
     if not user:
         invited_by = None
-        if args and args.isdigit():
-            ref_id = int(args)
+        if ref_arg and ref_arg.isdigit():
+            ref_id = int(ref_arg)
             if ref_id != user_id:
                 cursor.execute("SELECT * FROM users WHERE user_id = ?", (ref_id,))
                 if cursor.fetchone():
@@ -142,11 +150,11 @@ async def cmd_start(message: types.Message, command: CommandObject):
             f"🎁 *Сундуки готовы к открытию! Выберите сундук и заберите свой приз!*"
         )
     
-    await message.answer(welcome_text, reply_markup=get_main_menu(is_active, game_level), parse_mode="Markdown")
+    bot.send_message(user_id, welcome_text, reply_markup=get_main_menu(is_active, game_level), parse_mode="Markdown")
 
 # --- ИНСТРУКЦИЯ ПО АКТИВАЦИИ И ПОКУПКЕ РАУНДА ---
-@dp.callback_query(F.data == "buy_access")
-async def buy_access(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "buy_access")
+def buy_access(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     
     conn = sqlite3.connect("pocket_cash.db")
@@ -166,15 +174,15 @@ async def buy_access(callback: types.CallbackQuery):
         f"📌 **Ваш персональный ID:** `{user_id}` *(нажмите, чтобы скопировать)*\n\n"
         f"🚀 *После проверки администратор запустит ваш Раунд #{game_level}, и вы сможете сразу открыть сундуки!*"
     )
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text="✉️ Написать Администратору", url=f"https://t.me/{ADMIN_USERNAME.replace('@', '')}")]]
-    )
-    await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
-    await callback.answer()
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton(text="✉️ Написать Администратору", url=f"https://t.me/{ADMIN_USERNAME.replace('@', '')}"))
+    
+    bot.send_message(callback.message.chat.id, text, reply_markup=keyboard, parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
 # --- 📦 ИГРА «СУНДУКИ УДАЧИ» ---
-@dp.callback_query(F.data == "claim_bonus")
-async def start_chest_game(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "claim_bonus")
+def start_chest_game(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     
     conn = sqlite3.connect("pocket_cash.db")
@@ -184,35 +192,38 @@ async def start_chest_game(callback: types.CallbackQuery):
     
     if not row or row[0] == 0:
         conn.close()
-        return await callback.answer(f"🔒 Доступ ограничен! Для открытия сундуков сначала активируйте доступ у администратора {ADMIN_USERNAME}", show_alert=True)
+        return bot.answer_callback_query(callback.id, f"🔒 Доступ ограничен! Для открытия сундуков сначала активируйте доступ у администратора {ADMIN_USERNAME}", show_alert=True)
         
     is_active, spin_count = row
     
     if spin_count >= 3:
         conn.close()
-        return await callback.answer(f"⏳ Вы использовали все 3 попытки в этом раунде! Выведите средства и купите новый раунд за 30 TMT!", show_alert=True)
+        return bot.answer_callback_query(callback.id, f"⏳ Вы использовали все 3 попытки в этом раунде! Выведите средства и купите новый раунд за 30 TMT!", show_alert=True)
 
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[
-            types.InlineKeyboardButton(text="🎁 Сундук #1", callback_data="open_chest_1"),
-            types.InlineKeyboardButton(text="🎁 Сундук #2", callback_data="open_chest_2"),
-            types.InlineKeyboardButton(text="🎁 Сундук #3", callback_data="open_chest_3")
-        ]]
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.row(
+        telebot.types.InlineKeyboardButton(text="🎁 Сундук #1", callback_data="open_chest_1"),
+        telebot.types.InlineKeyboardButton(text="🎁 Сундук #2", callback_data="open_chest_2"),
+        telebot.types.InlineKeyboardButton(text="🎁 Сундук #3", callback_data="open_chest_3")
     )
     
-    await callback.message.answer("🎰 **АБСОЛЮТНАЯ УДАЧА**\n\nПеред вами 3 сундука! В одном из них спрятан ДЖЕКПOТ **400 TMT**! Какой откроете?", reply_markup=keyboard, parse_mode="Markdown")
-    await callback.answer()
+    bot.send_message(callback.message.chat.id, "🎰 **АБСОЛЮТНАЯ УДАЧА**\n\nПеред вами 3 сундука! В одном из них спрятан ДЖЕКПOТ **400 TMT**! Какой откроете?", reply_markup=keyboard, parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
-@dp.callback_query(F.data.startswith("open_chest_"))
-async def open_chest_handler(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("open_chest_"))
+def open_chest_handler(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     chest_num = callback.data.split("_")[2]
     
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
     cursor.execute("SELECT spin_count, game_level FROM users WHERE user_id = ?", (user_id,))
-    spin_count, game_level = cursor.fetchone()
+    res = cursor.fetchone()
+    if not res:
+        conn.close()
+        return bot.answer_callback_query(callback.id)
     
+    spin_count, game_level = res
     spin_count += 1
     
     if game_level == 1:
@@ -236,12 +247,12 @@ async def open_chest_handler(callback: types.CallbackQuery):
     conn.commit()
     conn.close()
     
-    await callback.message.edit_text(msg, parse_mode="Markdown")
-    await callback.answer()
+    bot.edit_message_text(msg, callback.message.chat.id, callback.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
-# --- 🎯 РАЗДЕЛ ЗАДАНИЙ (ДОСТУПЕН ДАЖЕ НЕАКТИВНЫМ) ---
-@dp.callback_query(F.data == "quests")
-async def quests_handler(callback: types.CallbackQuery):
+# --- 🎯 РАЗДЕЛ ЗАДАНИЙ ---
+@bot.callback_query_handler(func=lambda call: call.data == "quests")
+def quests_handler(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
@@ -252,18 +263,19 @@ async def quests_handler(callback: types.CallbackQuery):
     completed = res[0].split(",") if (res and res[0]) else []
     q1_btn = "✅ Задание выполнено (+2 TMT)" if "q1" in completed else "🎯 Выполнить задание (+2 TMT)"
     
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text=q1_btn, callback_data="claim_q1")]])
+    keyboard = telebot.types.InlineKeyboardMarkup()
+    keyboard.add(telebot.types.InlineKeyboardButton(text=q1_btn, callback_data="claim_q1"))
     
     text = (
         "🎯 **ЕЖЕДНЕВНЫЕ ЗАДАНИЯ**\n\n"
         "Выполняйте задания и зарабатывайте бонусный баланс абсолютно бесплатно!\n\n"
         "1️⃣ **Подписка на наш канал выплат:** +2.00 TMT"
     )
-    await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
-    await callback.answer()
+    bot.send_message(callback.message.chat.id, text, reply_markup=keyboard, parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
-@dp.callback_query(F.data == "claim_q1")
-async def claim_q1(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "claim_q1")
+def claim_q1(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
@@ -274,7 +286,7 @@ async def claim_q1(callback: types.CallbackQuery):
     
     if "q1" in completed:
         conn.close()
-        return await callback.answer("❌ Вы уже забирали эту награду!", show_alert=True)
+        return bot.answer_callback_query(callback.id, "❌ Вы уже забирали эту награду!", show_alert=True)
         
     completed.append("q1")
     new_completed = ",".join(completed)
@@ -282,18 +294,18 @@ async def claim_q1(callback: types.CallbackQuery):
     conn.commit()
     conn.close()
     
-    await callback.message.answer("🎉 Бонус **+2.00 TMT** успешно зачислен на ваш баланс!", parse_mode="Markdown")
-    await callback.answer()
+    bot.send_message(callback.message.chat.id, "🎉 Бонус **+2.00 TMT** успешно зачислен на ваш баланс!", parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
 # --- 🎁 ПРОМОКОДЫ ---
-@dp.callback_query(F.data == "use_promo")
-async def ask_promo(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("🎁 **Введите промокод:**")
-    await state.set_state(PromoState.waiting_for_code)
-    await callback.answer()
+@bot.callback_query_handler(func=lambda call: call.data == "use_promo")
+def ask_promo(callback: telebot.types.CallbackQuery):
+    bot.send_message(callback.message.chat.id, "🎁 **Введите промокод:**", parse_mode="Markdown")
+    bot.set_state(callback.from_user.id, PromoState.waiting_for_code, callback.message.chat.id)
+    bot.answer_callback_query(callback.id)
 
-@dp.message(PromoState.waiting_for_code)
-async def process_promo(message: types.Message, state: FSMContext):
+@bot.message_handler(state=PromoState.waiting_for_code)
+def process_promo(message: telebot.types.Message):
     code = message.text.strip().upper()
     user_id = message.from_user.id
     
@@ -302,16 +314,18 @@ async def process_promo(message: types.Message, state: FSMContext):
     cursor.execute("SELECT * FROM used_promos WHERE user_id = ? AND code = ?", (user_id, code))
     if cursor.fetchone():
         conn.close()
-        await message.answer("❌ Вы уже активировали данный код!")
-        return await state.clear()
+        bot.send_message(message.chat.id, "❌ Вы уже активировали данный код!")
+        bot.delete_state(user_id, message.chat.id)
+        return
         
     cursor.execute("SELECT reward, uses_left FROM promo_codes WHERE code = ?", (code,))
     promo = cursor.fetchone()
     
     if not promo or promo[1] <= 0:
         conn.close()
-        await message.answer("❌ Код не существует или истрачен.")
-        return await state.clear()
+        bot.send_message(message.chat.id, "❌ Код не существует или истрачен.")
+        bot.delete_state(user_id, message.chat.id)
+        return
         
     reward, uses_left = promo
     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
@@ -320,29 +334,29 @@ async def process_promo(message: types.Message, state: FSMContext):
     conn.commit()
     conn.close()
     
-    await message.answer(f"🎉 **Промокод активирован!** Вам начислено **+{reward:.2f} TMT**!", parse_mode="Markdown")
-    await state.clear()
+    bot.send_message(message.chat.id, f"🎉 **Промокод активирован!** Вам начислено **+{reward:.2f} TMT**!", parse_mode="Markdown")
+    bot.delete_state(user_id, message.chat.id)
 
 # --- 📖 КАК РАБОТАЕТ ИГРА ---
-@dp.callback_query(F.data == "how_to_earn")
-async def how_to_earn_handler(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "how_to_earn")
+def how_to_earn_handler(callback: telebot.types.CallbackQuery):
     instruction_text = (
         "📖 **ПРАВИЛА ИГРЫ И УДАЧИ** 📖\n\n"
         "1️⃣ **Игровые раунды:**\n"
-        "• Первый раунд активируется за **50 TMT**, а последующие — за **30 TMT** через администратора **{ADMIN_USERNAME}**.\n\n"
+        f"• Первый раунд активируется за **50 TMT**, а последующие — за **30 TMT** через администратора **{ADMIN_USERNAME}**.\n\n"
         "2️⃣ **Сундуки удачи:**\n"
         "• В каждом раунде вам дается **3 попытки** на открытие сундуков с призами до **400 TMT**!\n\n"
         "3️⃣ **Бесплатный бонус (Задания):**\n"
         "• Подписывайтесь на канал выплат во вкладке «🎯 Задания» и получайте **+2 TMT** даже с неактивным аккаунтом!\n\n"
         "4️⃣ **Партнерская программа:**\n"
         "• Приглашайте друзей по своей ссылке и получайте **+5 TMT** за каждого друга, который активирует раунд!"
-    ).format(ADMIN_USERNAME=ADMIN_USERNAME)
-    await callback.message.answer(instruction_text, parse_mode="Markdown")
-    await callback.answer()
+    )
+    bot.send_message(callback.message.chat.id, instruction_text, parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
 # --- 👑 АДМИН-ПАНЕЛЬ ---
-@dp.message(Command("admin"))
-async def admin_panel(message: types.Message):
+@bot.message_handler(commands=['admin'])
+def admin_panel(message: telebot.types.Message):
     if message.from_user.id != ADMIN_ID: return
     text = (
         "👑 **Админ-Панель**\n\n"
@@ -350,18 +364,18 @@ async def admin_panel(message: types.Message):
         "• `/send` — Рассылка всем пользователям\n"
         "• `/addpromo КОД СУММА КОЛ_ВО` — Создать промокод"
     )
-    await message.answer(text, parse_mode="Markdown")
+    bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
-@dp.message(Command("activate"))
-async def activate_user_cmd(message: types.Message, command: CommandObject):
+@bot.message_handler(commands=['activate'])
+def activate_user_cmd(message: telebot.types.Message):
     if message.from_user.id != ADMIN_ID: return
     try:
-        target_id = int(command.args.strip())
+        args = message.text.split()
+        target_id = int(args[1])
         conn = sqlite3.connect("pocket_cash.db")
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET is_active = 1, spin_count = 0 WHERE user_id = ?", (target_id,))
         
-        # Начисление рефералу ровно +5 TMT при активации приглашенным игроком
         cursor.execute("SELECT invited_by FROM users WHERE user_id = ?", (target_id,))
         row = cursor.fetchone()
         if row and row[0]:
@@ -369,7 +383,7 @@ async def activate_user_cmd(message: types.Message, command: CommandObject):
             ref_bonus = 5.0
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (ref_bonus, invited_by))
             try: 
-                await bot.send_message(invited_by, f"🎉 Ваш реферал активировал раунд! Вам начислено **+{ref_bonus:.2f} TMT**!", parse_mode="Markdown")
+                bot.send_message(invited_by, f"🎉 Ваш реферал активировал раунд! Вам начислено **+{ref_bonus:.2f} TMT**!", parse_mode="Markdown")
             except Exception: 
                 pass
 
@@ -377,37 +391,38 @@ async def activate_user_cmd(message: types.Message, command: CommandObject):
         conn.close()
         
         try:
-            await bot.send_message(target_id, "🎉 **Ваш раунд успешно активирован!** Нажмите «📦 Открыть сундуки» и заберите свой выигрыш!")
+            bot.send_message(target_id, "🎉 **Ваш раунд успешно активирован!** Нажмите «📦 Открыть сундуки» и заберите свой выигрыш!", parse_mode="Markdown")
         except Exception: pass
         
-        await message.answer(f"✅ Игровой раунд пользователя `{target_id}` успешно активирован!", parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"✅ Игровой раунд пользователя `{target_id}` успешно активирован!", parse_mode="Markdown")
     except Exception:
-        await message.answer("❌ Ошибка! Укажите ID: `/activate 123456789`", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "❌ Ошибка! Укажите ID: `/activate 123456789`", parse_mode="Markdown")
 
-@dp.message(Command("addpromo"))
-async def add_promo_cmd(message: types.Message, command: CommandObject):
+@bot.message_handler(commands=['addpromo'])
+def add_promo_cmd(message: telebot.types.Message):
     if message.from_user.id != ADMIN_ID: return
     try:
-        args = command.args.split()
-        code, reward, uses = args[0].upper(), float(args[1]), int(args[2])
+        args = message.text.split()
+        code, reward, uses = args[1].upper(), float(args[2]), int(args[3])
         conn = sqlite3.connect("pocket_cash.db")
         cursor = conn.cursor()
         cursor.execute("INSERT INTO promo_codes VALUES (?, ?, ?)", (code, reward, uses))
         conn.commit()
         conn.close()
-        await message.answer(f"✅ Промокод `{code}` на {reward} TMT создан!")
+        bot.send_message(message.chat.id, f"✅ Промокод `{code}` на {reward} TMT создан!")
     except Exception:
-        await message.answer("Ошибка! Формат: `/addpromo BONUS 5 10`")
+        bot.send_message(message.chat.id, "Ошибка! Формат: `/addpromo BONUS 5 10`")
 
-@dp.message(Command("send"))
-async def start_broadcast(message: types.Message, state: FSMContext):
+@bot.message_handler(commands=['send'])
+def start_broadcast(message: telebot.types.Message):
     if message.from_user.id != ADMIN_ID: return
-    await message.answer("📢 Введите текст сообщения для рассылки:")
-    await state.set_state(BroadcastState.waiting_for_message)
+    bot.send_message(message.chat.id, "📢 Введите текст сообщения для рассылки:")
+    bot.set_state(message.from_user.id, BroadcastState.waiting_for_message, message.chat.id)
 
-@dp.message(BroadcastState.waiting_for_message)
-async def process_broadcast(message: types.Message, state: FSMContext):
+@bot.message_handler(state=BroadcastState.waiting_for_message)
+def process_broadcast(message: telebot.types.Message):
     text = message.text
+    user_id = message.from_user.id
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users")
@@ -417,18 +432,17 @@ async def process_broadcast(message: types.Message, state: FSMContext):
     count = 0
     for u in users:
         try:
-            await bot.send_message(u[0], f"📢 **УВЕДОМЛЕНИЕ:**\n\n{text}", parse_mode="Markdown")
+            bot.send_message(u[0], f"📢 **УВЕДОМЛЕНИЕ:**\n\n{text}", parse_mode="Markdown")
             count += 1
-            await asyncio.sleep(0.05)
         except Exception:
             pass
             
-    await message.answer(f"✅ Рассылка отправлена {count} пользователям!")
-    await state.clear()
+    bot.send_message(message.chat.id, f"✅ Рассылка отправлена {count} пользователям!")
+    bot.delete_state(user_id, message.chat.id)
 
 # --- ДОП. РАЗДЕЛЫ ---
-@dp.callback_query(F.data == "leaderboard")
-async def leaderboard_handler(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "leaderboard")
+def leaderboard_handler(callback: telebot.types.CallbackQuery):
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
     cursor.execute("SELECT username, balance FROM users ORDER BY balance DESC LIMIT 5")
@@ -436,46 +450,50 @@ async def leaderboard_handler(callback: types.CallbackQuery):
     conn.close()
     text = "🏆 **ТАБЛИЦА САМЫХ УСПЕШНЫХ ИГРОКОВ**\n\n💰 **Топ по заработку:**\n"
     for i, (name, bal) in enumerate(top_bal, 1): text += f"{i}. {name} — **{bal:.2f} TMT**\n"
-    await callback.message.answer(text, parse_mode="Markdown")
-    await callback.answer()
+    bot.send_message(callback.message.chat.id, text, parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
-@dp.callback_query(F.data == "my_balance")
-async def show_balance(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "my_balance")
+def show_balance(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
     cursor.execute("SELECT balance, is_active, game_level, referral_count, streak_days FROM users WHERE user_id = ?", (user_id,))
     u = cursor.fetchone()
     conn.close()
-    await callback.message.answer(
+    bot.send_message(
+        callback.message.chat.id,
         f"💳 **ВАШ ЛИЧНЫЙ КОШЕЛЕК**\n\n• Баланс: **{u[0]:.2f} TMT**\n• Игровой раунд: **#{u[2]}**\n• Статус раунда: {'🟢 Активен' if u[1] else '🔴 Ожидает активации'}\n• Партнеров приглашено: **{u[3]}**",
         parse_mode="Markdown"
     )
-    await callback.answer()
+    bot.answer_callback_query(callback.id)
 
-@dp.callback_query(F.data == "ref_link")
-async def ref_link(callback: types.CallbackQuery):
+@bot.callback_query_handler(func=lambda call: call.data == "ref_link")
+def ref_link(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
-    bot_info = await bot.get_me()
-    await callback.message.answer(f"👥 **ПАРТНЕРСКАЯ ССЫЛКА**\n\nПриглашайте друзей! За каждого друга, который **активирует раунд**, вам начислится **+5.00 TMT**:\n`https://t.me/{bot_info.username}?start={user_id}`", parse_mode="Markdown")
-    await callback.answer()
+    bot_info = bot.get_me()
+    bot.send_message(callback.message.chat.id, f"👥 **ПАРТНЕРСКАЯ ССЫЛКА**\n\nПриглашайте друзей! За каждого друга, который **активирует раунд**, вам начислится **+5.00 TMT**:\n`https://t.me/{bot_info.username}?start={user_id}`", parse_mode="Markdown")
+    bot.answer_callback_query(callback.id)
 
-@dp.callback_query(F.data == "withdraw")
-async def withdraw_request(callback: types.CallbackQuery, state: FSMContext):
+@bot.callback_query_handler(func=lambda call: call.data == "withdraw")
+def withdraw_request(callback: telebot.types.CallbackQuery):
     user_id = callback.from_user.id
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     balance = cursor.fetchone()[0]
     conn.close()
-    if balance < 20: return await callback.answer("⚠️ Минимальная сумма вывода: 20 TMT.", show_alert=True)
-    await callback.message.answer("📤 Введите ваш номер для вывода средств:")
-    await state.set_state(WithdrawState.waiting_for_phone)
-    await callback.answer()
+    if balance < 20: return bot.answer_callback_query(callback.id, "⚠️ Минимальная сумма вывода: 20 TMT.", show_alert=True)
+    bot.send_message(callback.message.chat.id, "📤 Введите ваш номер для вывода средств:")
+    bot.set_state(user_id, WithdrawState.waiting_for_phone, callback.message.chat.id)
+    bot.answer_callback_query(callback.id)
 
-@dp.message(WithdrawState.waiting_for_phone)
-async def process_withdraw(message: types.Message, state: FSMContext):
-    phone, user_id, username = message.text, message.from_user.id, message.from_user.username or message.from_user.first_name
+@bot.message_handler(state=WithdrawState.waiting_for_phone)
+def process_withdraw(message: telebot.types.Message):
+    phone = message.text
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    
     conn = sqlite3.connect("pocket_cash.db")
     cursor = conn.cursor()
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
@@ -484,17 +502,15 @@ async def process_withdraw(message: types.Message, state: FSMContext):
     conn.commit()
     conn.close()
     
-    await bot.send_message(ADMIN_ID, f"💸 **ЗАЯВКА НА ВЫВОД!**\nПользователь: @{username}\nСумма: **{balance:.2f} TMT**\nРеквизиты: `{phone}`", parse_mode="Markdown")
+    bot.send_message(ADMIN_ID, f"💸 **ЗАЯВКА НА ВЫВОД!**\nПользователь: @{username}\nСумма: **{balance:.2f} TMT**\nРеквизиты: `{phone}`", parse_mode="Markdown")
     try:
         masked_name = f"@{username[:3]}***" if username else "Игрок"
-        await bot.send_message(PAYMENTS_CHANNEL, f"💸 **ОФИЦИАЛЬНАЯ ВЫПЛАТА!**\n👤 Игрок: **{masked_name}**\n💰 Зачислено: **{balance:.2f} TMT**", parse_mode="Markdown")
+        bot.send_message(PAYMENTS_CHANNEL, f"💸 **ОФИЦИАЛЬНАЯ ВЫПЛАТА!**\n👤 Игрок: **{masked_name}**\n💰 Зачислено: **{balance:.2f} TMT**", parse_mode="Markdown")
     except Exception: pass
-    await message.answer("✅ Заявка отправлена администратору! Ожидайте зачисления.")
-    await state.clear()
-
-async def main():
-    print("Бот Pocket Cash TM успешно запущен!")
-    await dp.start_polling(bot)
+    
+    bot.send_message(message.chat.id, "✅ Заявка отправлена администратору! Ожидайте зачисления.")
+    bot.delete_state(user_id, message.chat.id)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("Бот Pocket Cash TM успешно запущен на telebot!")
+    bot.infinity_polling(skip_pending=True)
