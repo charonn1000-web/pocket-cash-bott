@@ -8,13 +8,12 @@ bot = telebot.TeleBot(os.getenv("BOT_TOKEN")) # или ваш токен
 
 
 # --- НАСТРОЙКИ ПРОЕКТА ---
-TOKEN = "8938982971:AAFw3Srlc0MYChPY1h4JdMvqXQ7V9c3lZTs"
+
 ADMIN_ID = 7015819580  # Ваш Telegram ID
 ADMIN_USERNAME = "@charon238"  # Ваш юзернейм в Telegram
 PAYMENTS_CHANNEL = "@pocket_cash_channel"  # Канал с выплатами
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+
 
 # --- БАЗА ДАННЫХ ---
 def init_db():
